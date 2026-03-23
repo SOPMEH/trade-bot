@@ -4,7 +4,7 @@ import hmac
 import json
 import logging
 from typing import Optional, List
-from urllib.parse import unquote
+from urllib.parse import parse_qsl, unquote
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, Depends
@@ -34,24 +34,21 @@ def validate_init_data(init_data: str) -> dict:
     if not init_data:
         raise HTTPException(status_code=401, detail="Отсутствуют данные авторизации Telegram")
 
-    raw_parts: dict[str, str] = {}
-    for item in init_data.split("&"):
-        if "=" in item:
-            k, v = item.split("=", 1)
-            raw_parts[k] = v
+    # parse_qsl автоматически URL-декодирует значения (user, auth_date и т.д.)
+    parsed = dict(parse_qsl(init_data, strict_parsing=False))
+    hash_str = parsed.pop("hash", None)
 
-    hash_str = raw_parts.pop("hash", None)
     if not hash_str:
         raise HTTPException(status_code=401, detail="Отсутствует hash")
 
-    data_check = "\n".join(f"{k}={raw_parts[k]}" for k in sorted(raw_parts))
+    data_check = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
     secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
     expected = hmac.new(secret_key, data_check.encode(), hashlib.sha256).hexdigest()
 
     if not hmac.compare_digest(expected, hash_str):
         raise HTTPException(status_code=401, detail="Неверная подпись initData")
 
-    return json.loads(unquote(raw_parts.get("user", "{}")))
+    return json.loads(parsed.get("user", "{}"))
 
 
 async def get_current_user(request: Request) -> dict:
